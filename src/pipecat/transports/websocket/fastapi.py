@@ -62,6 +62,7 @@ class FastAPIWebsocketParams(TransportParams):
     serializer: Optional[FrameSerializer] = None
     session_timeout: Optional[int] = None
     is_binary: bool = False
+    format: str = "binary"
 
 
 class FastAPIWebsocketCallbacks(BaseModel):
@@ -85,17 +86,17 @@ class FastAPIWebsocketClient:
     with support for both binary and text message types.
     """
 
-    def __init__(self, websocket: WebSocket, is_binary: bool, callbacks: FastAPIWebsocketCallbacks):
+    def __init__(self, websocket: WebSocket, format: str, callbacks: FastAPIWebsocketCallbacks):
         """Initialize the WebSocket client.
 
         Args:
             websocket: The FastAPI WebSocket connection.
-            is_binary: Whether to use binary message format.
+            format: The message format to use.
             callbacks: Event callback functions.
         """
         self._websocket = websocket
         self._closing = False
-        self._is_binary = is_binary
+        self._format = format
         self._callbacks = callbacks
         self._leave_counter = 0
 
@@ -113,7 +114,14 @@ class FastAPIWebsocketClient:
         Returns:
             An async iterator yielding bytes or strings based on message type.
         """
-        return self._websocket.iter_bytes() if self._is_binary else self._websocket.iter_text()
+        if self._format == "binary":
+            return self._websocket.iter_bytes()
+        elif self._format == "text":
+            return self._websocket.iter_text()
+        elif self._format == "json":
+            return self._websocket.iter_json()
+        else:
+            raise ValueError(f"Invalid format: {self._format}")
 
     async def send(self, data: str | bytes):
         """Send data through the WebSocket connection.
@@ -123,8 +131,10 @@ class FastAPIWebsocketClient:
         """
         try:
             if self._can_send():
-                if self._is_binary:
+                if self._format == "binary":
                     await self._websocket.send_bytes(data)
+                elif self._format == "json":
+                    await self._websocket.send_json(data)
                 else:
                     await self._websocket.send_text(data)
         except Exception as e:
@@ -507,7 +517,7 @@ class FastAPIWebsocketTransport(BaseTransport):
         is_binary = params.is_binary
         if self._params.serializer:
             is_binary = self._params.serializer.type == FrameSerializerType.BINARY
-        self._client = FastAPIWebsocketClient(websocket, is_binary, self._callbacks)
+        self._client = FastAPIWebsocketClient(websocket, params.format, self._callbacks)
 
         self._input = FastAPIWebsocketInputTransport(
             self, self._client, self._params, name=self._input_name
