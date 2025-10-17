@@ -15,7 +15,13 @@ class AudioWebsocketSerializer(FrameSerializer):
         self.sample_rate = frame.audio_in_sample_rate
 
     async def serialize(self, frame: Frame) -> bytes:
-        return frame.audio if isinstance(frame, InputAudioRawFrame) else None
+        if isinstance(frame, TransportMessageUrgentFrame):
+            msg_type = frame.message["type"]
+            if msg_type == "user-transcription":
+                text =  bytes(frame.message["data"]["text"], "utf-8")
+                return text
+        elif isinstance(frame, OutputAudioRawFrame):
+            return frame.audio
 
     async def deserialize(self, data: bytes) -> Frame:
         return InputAudioRawFrame(audio=data, sample_rate=self.sample_rate, num_channels=self.num_channels)
