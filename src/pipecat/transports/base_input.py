@@ -13,7 +13,7 @@ input processing, including VAD, turn analysis, and interruption management.
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
-
+import numpy as np
 from loguru import logger
 
 from pipecat.audio.turn.base_turn_analyzer import (
@@ -394,12 +394,26 @@ class BaseInputTransport(FrameProcessor):
             await self.cancel_task(self._audio_task)
             self._audio_task = None
 
+    def _stereo_to_mono(self, audio_bytes: bytes) -> bytes:
+        # Convert bytes to numpy array of int16
+        audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
+        # Reshape to (num_samples, 2) for stereo
+        stereo_array = audio_array.reshape(-1, 2)
+        
+        # Average the two channels
+        mono_array = stereo_array.mean(axis=1).astype(np.int16)
+        
+        # Convert back to bytes
+        return mono_array.tobytes()
+
     async def _vad_analyze(self, audio_frame: InputAudioRawFrame) -> VADState:
         """Analyze audio frame for voice activity."""
+
+        audio = self._stereo_to_mono(audio_frame.audio)
         state = VADState.QUIET
         if self.vad_analyzer:
             state = await self.get_event_loop().run_in_executor(
-                self._executor, self.vad_analyzer.analyze_audio, audio_frame.audio
+                self._executor, self.vad_analyzer.analyze_audio, audio
             )
         return state
 

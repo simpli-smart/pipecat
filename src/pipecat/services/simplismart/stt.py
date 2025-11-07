@@ -13,6 +13,11 @@ from pipecat.services.whisper.base_stt import BaseWhisperSTTService, Transcripti
 from pipecat.transcriptions.language import Language
 import httpx
 import time
+from loguru import logger
+import soundfile as sf
+import io
+from collections import defaultdict
+import numpy as np
 
 class SimplismartSTTService(BaseWhisperSTTService):
     """OpenAI Speech-to-Text service that generates text from audio.
@@ -54,24 +59,45 @@ class SimplismartSTTService(BaseWhisperSTTService):
         )
 
         self._base_url = base_url + "/predict"
+        self.num_channels = kwargs.get("num_channels", 1)
 
     async def _transcribe(self, audio: bytes) -> Transcription:
-        assert self._language is not None  # Assigned in the BaseWhisperSTTService class
+        assert self._language is not None  # set in BaseWhisperSTTService
 
-        # Build kwargs dict with only set parameters
-        audio_b64 = base64.b64encode(audio).decode("utf-8")
-        payload = {
-            "audio_file": audio_b64,
-            "language": self._language
-        }
-        if self._prompt is not None:
-            payload["initial_prompt"] = self._prompt
+        audio_array = np.frombuffer(audio, dtype=np.int16)
+        stereo_array = audio_array.reshape(-1, self.num_channels)
+        channel_dict = defaultdict(list)
 
-        if self._temperature is not None:
-            payload["temperature"] = self._temperature
+        # --- Loop over channels ---
+        for idx in range(self.num_channels):
+            channel_data = stereo_array[:, idx]
 
-        response = httpx.post(self._base_url, json=payload)
-        text = response.json()["transcription"]
-        text = "".join([i["text"] for i in text])
+            buf = io.BytesIO()
+            sf.write(buf, channel_data, self.sample_rate, format='WAV')
+            buf.seek(0)
 
-        return Transcription(text=text)
+            audio_b64 = base64.b64encode(buf.read()).decode("utf-8")
+            payload = {
+                "audio_file": audio_b64,
+                "language": self._language,
+                "vad_model": "silero"
+            }
+
+            if self._prompt is not None:
+                payload["initial_prompt"] = self._prompt
+            if self._temperature is not None:
+                payload["temperature"] = self._temperature
+
+            response = httpx.post(self._base_url, json=payload)
+            resp_json = response.json()
+            logger.info(f"Response (ch {idx}): {resp_json}")
+
+            text_segments = resp_json.get("transcription", [])
+            text = "".join([seg.get("text", "") for seg in text_segments])
+            channel_dict[idx].append(text.strip())
+
+        for idx, text in channel_dict.items():
+            channel_dict[idx] = " ".join(text)
+
+        merge_channel = "<<separator>>".join(channel_dict.values())
+        return Transcription(text=merge_channel)
