@@ -123,7 +123,17 @@ class FastAPIWebsocketClient:
         else:
             raise ValueError(f"Invalid format: {self._format}")
 
-    async def send(self, data: str | bytes):
+    async def _send_item(self, item: str | bytes | dict):
+        if isinstance(item, dict):
+            await self._websocket.send_json(item)
+        elif isinstance(item, bytes):
+            await self._websocket.send_bytes(item)
+        elif isinstance(item, str):
+            await self._websocket.send_text(item)
+        else:
+            raise ValueError(f"Invalid item type: {type(item)}")
+
+    async def send(self, data: str | bytes | dict | list):
         """Send data through the WebSocket connection.
 
         Args:
@@ -131,12 +141,12 @@ class FastAPIWebsocketClient:
         """
         try:
             if self._can_send():
-                if self._format == "binary":
-                    await self._websocket.send_bytes(data)
-                elif self._format == "json":
-                    await self._websocket.send_json(data)
+                if isinstance(data, list):
+                    for item in data:
+                        await self._send_item(item)
                 else:
-                    await self._websocket.send_text(data)
+                    await self._send_item(data)
+            
         except Exception as e:
             logger.error(
                 f"{self} exception sending data: {e.__class__.__name__} ({e}), application_state: {self._websocket.application_state}"
