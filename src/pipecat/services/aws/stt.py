@@ -30,7 +30,7 @@ from pipecat.frames.frames import (
 )
 from pipecat.services.aws.utils import build_event_message, decode_event, get_presigned_url
 from pipecat.services.stt_service import STTService
-from pipecat.transcriptions.language import Language
+from pipecat.transcriptions.language import Language, resolve_language
 from pipecat.utils.time import time_now_iso8601
 from pipecat.utils.tracing.service_decorators import traced_stt
 
@@ -58,7 +58,7 @@ class AWSTranscribeSTTService(STTService):
         api_key: Optional[str] = None,
         aws_access_key_id: Optional[str] = None,
         aws_session_token: Optional[str] = None,
-        region: Optional[str] = "us-east-1",
+        region: Optional[str] = None,
         sample_rate: int = 16000,
         language: Language = Language.EN,
         **kwargs,
@@ -69,7 +69,7 @@ class AWSTranscribeSTTService(STTService):
             api_key: AWS secret access key. If None, uses AWS_SECRET_ACCESS_KEY environment variable.
             aws_access_key_id: AWS access key ID. If None, uses AWS_ACCESS_KEY_ID environment variable.
             aws_session_token: AWS session token for temporary credentials. If None, uses AWS_SESSION_TOKEN environment variable.
-            region: AWS region for the service. Defaults to "us-east-1".
+            region: AWS region for the service.
             sample_rate: Audio sample rate in Hz. Must be 8000 or 16000. Defaults to 16000.
             language: Language for transcription. Defaults to English.
             **kwargs: Additional arguments passed to parent STTService class.
@@ -140,7 +140,7 @@ class AWSTranscribeSTTService(STTService):
                     return
                 logger.warning("WebSocket connection not established after connect")
             except Exception as e:
-                logger.error(f"Failed to connect (attempt {retry_count + 1}/{max_retries}): {e}")
+                await self.push_error(error_msg=f"Unknown error occurred: {e}", exception=e)
                 retry_count += 1
                 if retry_count < max_retries:
                     await asyncio.sleep(1)  # Wait before retrying
@@ -181,8 +181,7 @@ class AWSTranscribeSTTService(STTService):
                 try:
                     await self._connect()
                 except Exception as e:
-                    logger.error(f"Failed to reconnect: {e}")
-                    yield ErrorFrame("Failed to reconnect to AWS Transcribe", fatal=False)
+                    yield ErrorFrame(error=f"Unknown error occurred: {e}")
                     return
 
             # Format the audio data according to AWS event stream format
@@ -199,13 +198,11 @@ class AWSTranscribeSTTService(STTService):
                 await self._disconnect()
                 # Don't yield error here - we'll retry on next frame
             except Exception as e:
-                logger.error(f"Error sending audio: {e}")
-                yield ErrorFrame(f"AWS Transcribe error: {str(e)}", fatal=False)
+                yield ErrorFrame(error=f"Unknown error occurred: {e}")
                 await self._disconnect()
 
         except Exception as e:
-            logger.error(f"Error in run_stt: {e}")
-            yield ErrorFrame(f"AWS Transcribe error: {str(e)}", fatal=False)
+            yield ErrorFrame(error=f"Unknown error occurred: {e}")
             await self._disconnect()
 
     async def _connect(self):
@@ -286,8 +283,9 @@ class AWSTranscribeSTTService(STTService):
 
                 logger.info(f"{self} Successfully connected to AWS Transcribe")
 
+                await self._call_event_handler("on_connected")
             except Exception as e:
-                logger.error(f"{self} Failed to connect to AWS Transcribe: {e}")
+                await self.push_error(error_msg=f"Unknown error occurred: {e}", exception=e)
                 await self._disconnect()
                 raise
 
@@ -307,9 +305,10 @@ class AWSTranscribeSTTService(STTService):
                 await self._ws_client.send(json.dumps(end_stream))
             await self._ws_client.close()
         except Exception as e:
-            logger.warning(f"{self} Error closing WebSocket connection: {e}")
+            await self.push_error(error_msg=f"Unknown error occurred: {e}", exception=e)
         finally:
             self._ws_client = None
+            await self._call_event_handler("on_disconnected")
 
     def language_to_service_language(self, language: Language) -> str | None:
         """Convert internal language enum to AWS Transcribe language code.
@@ -324,7 +323,7 @@ class AWSTranscribeSTTService(STTService):
         Returns:
             AWS Transcribe compatible language code, or None if unsupported.
         """
-        language_map = {
+        LANGUAGE_MAP = {
             # Afrikaans
             Language.AF: "af-ZA",
             Language.AF_ZA: "af-ZA",
@@ -464,7 +463,7 @@ class AWSTranscribeSTTService(STTService):
             Language.ZU_ZA: "zu-ZA",
         }
 
-        return language_map.get(language)
+        return resolve_language(language, LANGUAGE_MAP, use_base_code=False)
 
     @traced_stt
     async def _handle_transcription(
@@ -524,16 +523,15 @@ class AWSTranscribeSTTService(STTService):
                                     )
                 elif headers.get(":message-type") == "exception":
                     error_msg = payload.get("Message", "Unknown error")
-                    logger.error(f"{self} Exception from AWS: {error_msg}")
-                    await self.push_frame(
-                        ErrorFrame(f"AWS Transcribe error: {error_msg}", fatal=False)
-                    )
+                    await self.push_error(error_msg=f"AWS Transcribe error: {error_msg}")
                 else:
                     logger.debug(f"{self} Other message type received: {headers}")
                     logger.debug(f"{self} Payload: {payload}")
             except websockets.exceptions.ConnectionClosed as e:
-                logger.error(f"{self} WebSocket connection closed in receive loop: {e}")
+                await self.push_error(
+                    error_msg=f"WebSocket connection closed in receive loop", exception=e
+                )
                 break
             except Exception as e:
-                logger.error(f"{self} Unexpected error in receive loop: {e}")
+                await self.push_error(error_msg=f"Unknown error occurred: {e}", exception=e)
                 break

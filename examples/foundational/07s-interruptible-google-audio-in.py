@@ -31,7 +31,8 @@ from pipecat.frames.frames import (
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
-from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
+from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.processors.frame_processor import FrameProcessor
 from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import create_transport
@@ -52,7 +53,7 @@ You are a helpful LLM in a WebRTC call. Your goals are to be helpful and brief i
 You are expert at transcribing audio to text. You will receive a mixture of audio and text input. When
 asked to transcribe what the user said, output an exact, word-for-word transcription.
 
-Your output will be converted to audio so don't include special characters in your answers.
+Your output will be spoken aloud, so avoid special characters that can't easily be spoken, such as emojis or bullet points.
 
 Each time you answer, you should respond in three parts.
 
@@ -244,8 +245,8 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
         },
     ]
 
-    context = OpenAILLMContext(messages)
-    context_aggregator = llm.create_context_aggregator(context)
+    context = LLMContext(messages)
+    context_aggregator = LLMContextAggregatorPair(context)
     audio_collector = UserAudioCollector(context, context_aggregator.user())
     pull_transcript_out_of_llm_output = TranscriptExtractor(context)
     fixup_context_messages = TranscriptionContextFixup(context)

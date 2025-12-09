@@ -89,7 +89,9 @@ class LLMAssistantAggregatorParams:
 
     Parameters:
         expect_stripped_words: Whether to expect and handle stripped words
-            in text frames by adding spaces between tokens.
+            in text frames by adding spaces between tokens. This parameter is
+            ignored when used with the newer LLMAssistantAggregator, which
+            handles word spacing automatically.
     """
 
     expect_stripped_words: bool = True
@@ -999,7 +1001,7 @@ class LLMAssistantContextAggregator(LLMContextResponseAggregator):
         await self.push_aggregation()
 
     async def _handle_text(self, frame: TextFrame):
-        if not self._started:
+        if not self._started or not frame.append_to_context:
             return
 
         if self._params.expect_stripped_words:

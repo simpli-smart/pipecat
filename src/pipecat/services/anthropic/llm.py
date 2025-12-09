@@ -151,7 +151,7 @@ class AnthropicLLMService(LLMService):
         self,
         *,
         api_key: str,
-        model: str = "claude-sonnet-4-20250514",
+        model: str = "claude-sonnet-4-5-20250929",
         params: Optional[InputParams] = None,
         client=None,
         retry_timeout_secs: Optional[float] = 5.0,
@@ -162,7 +162,7 @@ class AnthropicLLMService(LLMService):
 
         Args:
             api_key: Anthropic API key for authentication.
-            model: Model name to use. Defaults to "claude-sonnet-4-20250514".
+            model: Model name to use. Defaults to "claude-sonnet-4-5-20250929".
             params: Optional model parameters for inference.
             client: Optional custom Anthropic client instance.
             retry_timeout_secs: Request timeout in seconds for retry logic.
@@ -458,8 +458,7 @@ class AnthropicLLMService(LLMService):
         except httpx.TimeoutException:
             await self._call_event_handler("on_completion_timeout")
         except Exception as e:
-            logger.exception(f"{self} exception: {e}")
-            await self.push_error(ErrorFrame(f"{e}"))
+            await self.push_error(error_msg=f"Unknown error occurred: {e}", exception=e)
         finally:
             await self.stop_processing_metrics()
             await self.push_frame(LLMFullResponseEndFrame())
@@ -493,6 +492,8 @@ class AnthropicLLMService(LLMService):
         elif isinstance(frame, LLMContextFrame):
             context = frame.context
         elif isinstance(frame, LLMMessagesFrame):
+            # NOTE: LLMMessagesFrame is deprecated, so we don't support the newer universal
+            # LLMContext with it
             context = AnthropicLLMContext.from_messages(frame.messages)
         elif isinstance(frame, LLMUpdateSettingsFrame):
             await self._update_settings(frame.settings)

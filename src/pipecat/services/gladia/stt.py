@@ -23,6 +23,7 @@ from pipecat import __version__ as pipecat_version
 from pipecat.frames.frames import (
     CancelFrame,
     EndFrame,
+    ErrorFrame,
     Frame,
     InterimTranscriptionFrame,
     StartFrame,
@@ -31,7 +32,7 @@ from pipecat.frames.frames import (
 )
 from pipecat.services.gladia.config import GladiaInputParams
 from pipecat.services.stt_service import STTService
-from pipecat.transcriptions.language import Language
+from pipecat.transcriptions.language import Language, resolve_language
 from pipecat.utils.time import time_now_iso8601
 from pipecat.utils.tracing.service_decorators import traced_stt
 
@@ -54,7 +55,7 @@ def language_to_gladia_language(language: Language) -> Optional[str]:
     Returns:
         The Gladia language code string or None if not supported.
     """
-    BASE_LANGUAGES = {
+    LANGUAGE_MAP = {
         Language.AF: "af",
         Language.AM: "am",
         Language.AR: "ar",
@@ -156,17 +157,7 @@ def language_to_gladia_language(language: Language) -> Optional[str]:
         Language.ZH: "zh",
     }
 
-    result = BASE_LANGUAGES.get(language)
-
-    # If not found in base languages, try to find the base language from a variant
-    if not result:
-        # Convert enum value to string and get the base language part (e.g. es-ES -> es)
-        lang_str = str(language.value)
-        base_code = lang_str.split("-")[0].lower()
-        # Look up the base code in our supported languages
-        result = base_code if base_code in BASE_LANGUAGES.values() else None
-
-    return result
+    return resolve_language(language, LANGUAGE_MAP, use_base_code=True)
 
 
 # Deprecation warning for nested InputParams
@@ -477,7 +468,7 @@ class GladiaSTTService(STTService):
                             break
 
             except Exception as e:
-                logger.error(f"Error in connection handler: {e}")
+                await self.push_error(error_msg=f"Unknown error occurred: {e}", exception=e)
                 self._connection_active = False
 
                 if not self._should_reconnect:
@@ -567,7 +558,7 @@ class GladiaSTTService(STTService):
         except websockets.exceptions.ConnectionClosed:
             logger.debug("Connection closed during keepalive")
         except Exception as e:
-            logger.error(f"Error in Gladia keepalive task: {e}")
+            await self.push_error(error_msg=f"Unknown error occurred: {e}", exception=e)
 
     async def _receive_task_handler(self):
         try:
@@ -630,7 +621,7 @@ class GladiaSTTService(STTService):
             # Expected when closing the connection
             pass
         except Exception as e:
-            logger.error(f"Error in Gladia WebSocket handler: {e}")
+            await self.push_error(error_msg=f"Unknown error occurred: {e}", exception=e)
 
     async def _maybe_reconnect(self) -> bool:
         """Handle exponential backoff reconnection logic."""
@@ -638,7 +629,9 @@ class GladiaSTTService(STTService):
             return False
         self._reconnection_attempts += 1
         if self._reconnection_attempts > self._max_reconnection_attempts:
-            logger.error(f"Max reconnection attempts ({self._max_reconnection_attempts}) reached")
+            await self.push_error(
+                error_msg=f"Max reconnection attempts ({self._max_reconnection_attempts}) reached",
+            )
             self._should_reconnect = False
             return False
         delay = self._reconnection_delay * (2 ** (self._reconnection_attempts - 1))

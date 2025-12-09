@@ -50,6 +50,7 @@ autodoc_mock_imports = [
     # Krisp - has build issues on some platforms
     "pipecat_ai_krisp",
     "krisp",
+    "krisp_audio",
     # System-specific GUI libraries
     "_tkinter",
     "tkinter",
@@ -118,7 +119,6 @@ def import_core_modules():
         "pipecat.observers",
         "pipecat.runner",
         "pipecat.serializers",
-        "pipecat.sync",
         "pipecat.transcriptions",
         "pipecat.utils",
     ]

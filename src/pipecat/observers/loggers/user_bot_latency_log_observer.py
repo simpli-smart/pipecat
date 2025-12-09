@@ -15,8 +15,8 @@ from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     CancelFrame,
     EndFrame,
-    UserStartedSpeakingFrame,
-    UserStoppedSpeakingFrame,
+    VADUserStartedSpeakingFrame,
+    VADUserStoppedSpeakingFrame,
 )
 from pipecat.observers.base_observer import BaseObserver, FramePushed
 from pipecat.processors.frame_processor import FrameDirection
@@ -56,22 +56,34 @@ class UserBotLatencyLogObserver(BaseObserver):
 
         self._processed_frames.add(data.frame.id)
 
-        if isinstance(data.frame, UserStartedSpeakingFrame):
+        if isinstance(data.frame, VADUserStartedSpeakingFrame):
             self._user_stopped_time = 0
-        elif isinstance(data.frame, UserStoppedSpeakingFrame):
+        elif isinstance(data.frame, VADUserStoppedSpeakingFrame):
             self._user_stopped_time = time.time()
         elif isinstance(data.frame, (EndFrame, CancelFrame)):
-            if self._latencies:
-                avg_latency = mean(self._latencies)
-                min_latency = min(self._latencies)
-                max_latency = max(self._latencies)
-                logger.info(
-                    f"⏱️ LATENCY FROM USER STOPPED SPEAKING TO BOT STARTED SPEAKING - Avg: {avg_latency:.3f}s, Min: {min_latency:.3f}s, Max: {max_latency:.3f}s"
-                )
+            self._log_summary()
         elif isinstance(data.frame, BotStartedSpeakingFrame) and self._user_stopped_time:
             latency = time.time() - self._user_stopped_time
             self._user_stopped_time = 0
             self._latencies.append(latency)
-            logger.debug(
-                f"⏱️ LATENCY FROM USER STOPPED SPEAKING TO BOT STARTED SPEAKING: {latency:.3f}s"
-            )
+            self._log_latency(latency)
+
+    def _log_summary(self):
+        if not self._latencies:
+            return
+        avg_latency = mean(self._latencies)
+        min_latency = min(self._latencies)
+        max_latency = max(self._latencies)
+        logger.info(
+            f"⏱️ LATENCY FROM USER STOPPED SPEAKING TO BOT STARTED SPEAKING - Avg: {avg_latency:.3f}s, Min: {min_latency:.3f}s, Max: {max_latency:.3f}s"
+        )
+
+    def _log_latency(self, latency: float):
+        """Log the latency.
+
+        Args:
+            latency: The latency to log.
+        """
+        logger.debug(
+            f"⏱️ LATENCY FROM USER STOPPED SPEAKING TO BOT STARTED SPEAKING: {latency:.3f}s"
+        )
